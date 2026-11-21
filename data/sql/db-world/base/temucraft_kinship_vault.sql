@@ -3,7 +3,7 @@
 SET @KEY := 610104; SET @GAMEPLAY := 608003; SET @PRICE := 3210;
 DELETE FROM `item_template` WHERE `entry` = @KEY;
 INSERT INTO `item_template` (`entry`, `class`, `subclass`, `SoundOverrideSubclass`, `name`, `displayid`, `Quality`, `Flags`, `BuyCount`, `BuyPrice`, `SellPrice`, `InventoryType`, `ItemLevel`, `maxcount`, `stackable`, `spellid_1`, `spelltrigger_1`, `spellcharges_1`, `bonding`, `description`, `Material`, `ScriptName`) VALUES
-(@KEY, 0, 8, -1, 'Kinship Vault Key', 3745, 3, 0, 1, 0, 0, 0, 1, 0, 20, 18282, 0, -1, 1, 'Adds a tab to the Kinship Vault of your whole account. Open the vault with .vault next to a banker.', 4, 'item_temucraft_kinship_key');
+(@KEY, 0, 8, -1, 'Kinship Vault Key', 3745, 3, 0, 1, 0, 0, 0, 1, 0, 20, 18282, 0, -1, 1, 'Adds a tab to the Kinship Vault of your whole account. Open the vault with .temucraft vault next to a banker.', 4, 'item_temucraft_kinship_key');
 DELETE FROM `npc_vendor` WHERE `entry` = @GAMEPLAY AND `item` = @KEY;
 INSERT INTO `npc_vendor` (`entry`, `slot`, `item`, `maxcount`, `incrtime`, `ExtendedCost`, `VerifiedBuild`) VALUES (@GAMEPLAY, 100, @KEY, 0, 0, @PRICE, 0);
 

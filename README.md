@@ -1,7 +1,7 @@
 # mod-temucraft-kinship-vault
 
 The **Kinship Vault**: an account-wide stash. Put an item in on one character and take it out on another of the same
-account. Type `.vault` next to a banker (or anything with the banker flag, such as the Pocket Courier from
+account. Type `.temucraft vault` next to a banker (or anything with the banker flag, such as the Pocket Courier from
 mod-temucraft-courier). A gossip menu lists what can go in from your bags and what the vault holds, 20 per page.
 
 - **What can go in:** unbound or bound-to-account items with no enchantments, gems, wrapping or written text, not

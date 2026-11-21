@@ -6,7 +6,7 @@
  */
 
 // The Kinship Vault: an account-wide stash. Put an item in on one character, take it out on another of the same
-// account. Opened with .vault next to a banker (or anything with the banker flag, like the Pocket Courier).
+// account. Opened with .temucraft vault next to a banker (or anything with the banker flag, like the Pocket Courier).
 //
 // Only items that can be rebuilt exactly go in: unbound or bound-to-account items with no enchantments, gems, wrapping
 // or written text, not conjured, not timed, not a bag with something in it, and with their charges untouched. The
@@ -313,7 +313,7 @@ public:
 
     ChatCommandTable GetCommands() const override
     {
-        static ChatCommandTable root = { { "vault", HandleVault, SEC_PLAYER, Console::No } };
+        static ChatCommandTable root = { { "temucraft vault", HandleVault, 102550, Console::No } };
         return root;
     }
 

@@ -2,7 +2,7 @@
 
 #
 #    Temucraft.KinshipVault.Enable
-#        Description: The Kinship Vault, an account-wide stash opened with .vault next to a banker.
+#        Description: The Kinship Vault, an account-wide stash opened with .temucraft vault next to a banker.
 #        Default:     1
 
 Temucraft.KinshipVault.Enable = 1
