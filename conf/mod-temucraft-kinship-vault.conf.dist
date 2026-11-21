@@ -1,0 +1,31 @@
+[worldserver]
+
+#
+#    Temucraft.KinshipVault.Enable
+#        Description: The Kinship Vault, an account-wide stash opened with .vault next to a banker.
+#        Default:     1
+
+Temucraft.KinshipVault.Enable = 1
+
+#
+#    Temucraft.KinshipVault.SlotsPerTab
+#        Description: Items (stacks) one tab holds.
+#        Default:     28
+
+Temucraft.KinshipVault.SlotsPerTab = 28
+
+#
+#    Temucraft.KinshipVault.FreeTabs
+#    Temucraft.KinshipVault.MaxTabs
+#        Description: Tabs every account has, and the most it can have with Kinship Vault Keys.
+#        Default:     1, 5
+
+Temucraft.KinshipVault.FreeTabs = 1
+Temucraft.KinshipVault.MaxTabs = 5
+
+#
+#    Temucraft.KinshipVault.BankerRange
+#        Description: How close (yards) a banker (or anything with the banker flag) must be.
+#        Default:     10
+
+Temucraft.KinshipVault.BankerRange = 10
