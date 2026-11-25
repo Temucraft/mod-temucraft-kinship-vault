@@ -27,6 +27,9 @@
 #include "ScriptMgr.h"
 #include "ScriptedGossip.h"
 #include "TemucraftModuleText.h"
+#include "AsyncCallbackProcessor.h"
+#include "Transaction.h"
+#include <unordered_set>
 #include <vector>
 
 using namespace Acore::ChatCommands;
@@ -53,6 +56,15 @@ namespace
 
     struct Stored { uint32 id; uint32 entry; uint32 count; };
     std::unordered_map<ObjectGuid::LowType, std::vector<Stored>> pages;   // what the last withdraw page showed
+
+    // The vault's DELETE / INSERT go through the async DB queue (the inventory save in the same transaction only has
+    // async prepared statements, so a direct commit isn't possible). Until it has run, a sync query still sees the
+    // old rows: `taken` (row ids handed out, never listed or given again) and `depositing` (rows on their way in, per
+    // account, counted against the capacity) cover that window. Gossip and these callbacks both run on the world
+    // thread (CMSG_GOSSIP_SELECT_OPTION is thread-unsafe; callbacks run from the WorldScript's OnUpdate), so no lock.
+    std::unordered_set<uint32> taken;
+    std::unordered_map<uint32, uint32> depositing;
+    AsyncCallbackProcessor<TransactionCallback> callbacks;
 
     char const* T(Player* p, uint32 id, char const* fb) { return TemucraftModuleText(MODULE, p, id, fb); }
 
@@ -151,8 +163,10 @@ namespace
             do
             {
                 Field* f = r->Fetch();
-                shown.push_back({ f[0].Get<uint32>(), f[1].Get<uint32>(), f[2].Get<uint32>() });
                 total = uint32(f[3].Get<uint64>());
+                if (taken.count(f[0].Get<uint32>()))   // on its way out
+                    continue;
+                shown.push_back({ f[0].Get<uint32>(), f[1].Get<uint32>(), f[2].Get<uint32>() });
             } while (r->NextRow());
         for (uint32 i = 0; i < shown.size(); ++i)
             AddGossipItemFor(player, GOSSIP_ICON_VENDOR, Acore::StringFormat("{} x{}", ItemName(player, shown[i].entry), shown[i].count), MENU, A_WITHDRAW + i);
@@ -186,7 +200,7 @@ namespace
         if (!item || Refusal(item))
             return;
         uint32 account = player->GetSession()->GetAccountId();
-        if (Used(account) >= Tabs(account) * cfg.slotsPerTab)
+        if (Used(account) + depositing[account] >= Tabs(account) * cfg.slotsPerTab)
         {
             handler.SendSysMessage(T(player, 9, "The vault is full. A Kinship Vault Key adds a tab."));
             return;
@@ -199,7 +213,12 @@ namespace
         trans->Append("INSERT INTO mod_temucraft_kinship_vault (account, entry, count, random_property, durability, deposited_by, deposited_at) "
                       "VALUES ({}, {}, {}, {}, {}, {}, UNIX_TIMESTAMP())", account, entry, count, random, durability, player->GetGUID().GetCounter());
         player->SaveInventoryAndGoldToDB(trans);
-        CharacterDatabase.CommitTransaction(trans);
+        ++depositing[account];
+        callbacks.AddCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([account](bool)
+        {
+            if (auto it = depositing.find(account); it != depositing.end() && it->second && !--it->second)
+                depositing.erase(it);
+        });
         handler.PSendSysMessage(T(player, 10, "|cff66ccffKinship Vault:|r put in {} x{}."), ItemName(player, entry), count);
     }
 
@@ -207,14 +226,22 @@ namespace
     {
         ChatHandler handler(player->GetSession());
         std::vector<Stored>& shown = pages[player->GetGUID().GetCounter()];
-        if (index >= shown.size())
+        if (index >= shown.size() || !shown[index].id)
             return;
         Stored s = shown[index];
+        // taken before anything else: a second click (or another character of the account) can't get this row again,
+        // even while the DELETE is still waiting in the DB queue
+        shown[index].id = 0;
+        if (!taken.insert(s.id).second)
+            return;
         // read the row again: another character of the account may have taken it meanwhile
         QueryResult r = CharacterDatabase.Query("SELECT entry, count, random_property, durability FROM mod_temucraft_kinship_vault WHERE id = {} AND account = {}",
             s.id, player->GetSession()->GetAccountId());
         if (!r)
+        {
+            taken.erase(s.id);
             return;
+        }
         Field* f = r->Fetch();
         uint32 entry = f[0].Get<uint32>(), count = f[1].Get<uint32>();
         int32 random = f[2].Get<int32>();
@@ -222,18 +249,31 @@ namespace
         ItemPosCountVec dest;
         if (player->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, entry, count) != EQUIP_ERR_OK)
         {
+            taken.erase(s.id);
             handler.SendSysMessage(T(player, 11, "No room in your bags (or you can carry only one of these)."));
             return;
         }
         Item* item = player->StoreNewItem(dest, entry, true, random);
         if (!item)
+        {
+            taken.erase(s.id);
             return;
+        }
         if (item->GetUInt32Value(ITEM_FIELD_MAXDURABILITY))
             item->SetUInt32Value(ITEM_FIELD_DURABILITY, std::min(durability, item->GetUInt32Value(ITEM_FIELD_MAXDURABILITY)));
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
         trans->Append("DELETE FROM mod_temucraft_kinship_vault WHERE id = {}", s.id);
         player->SaveInventoryAndGoldToDB(trans);
-        CharacterDatabase.CommitTransaction(trans);
+        uint32 const id = s.id;
+        callbacks.AddCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([id](bool success)
+        {
+            // on failure the row is still there while the item was given: keep it taken until a restart
+            if (success)
+                taken.erase(id);
+            else
+                LOG_ERROR("module", "mod-temucraft-kinship-vault: withdrawing vault row {} failed in the database; the row stays locked.", id);
+        });
+
         handler.PSendSysMessage(T(player, 12, "|cff66ccffKinship Vault:|r took out {} x{}."), ItemName(player, entry), count);
     }
 }
@@ -298,7 +338,9 @@ public:
         }
         player->DestroyItemCount(item->GetEntry(), 1, true);
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-        trans->Append("REPLACE INTO mod_temucraft_kinship_vault_account (account, tabs) VALUES ({}, {})", account, tabs + 1);
+        // relative to the stored value, so two keys used before the first write runs both count
+        trans->Append("INSERT INTO mod_temucraft_kinship_vault_account (account, tabs) VALUES ({0}, {1}) "
+            "ON DUPLICATE KEY UPDATE tabs = LEAST(GREATEST(tabs, {2}) + 1, {3})", account, tabs + 1, cfg.freeTabs, cfg.maxTabs);
         player->SaveInventoryAndGoldToDB(trans);
         CharacterDatabase.CommitTransaction(trans);
         handler.PSendSysMessage(T(player, 14, "|cff66ccffKinship Vault:|r now {} tabs ({} places)."), tabs + 1, (tabs + 1) * cfg.slotsPerTab);
@@ -336,6 +378,9 @@ class TemucraftKinshipVault_World : public WorldScript
 {
 public:
     TemucraftKinshipVault_World() : WorldScript("TemucraftKinshipVault_World") { }
+
+    void OnUpdate(uint32 /*diff*/) override { callbacks.ProcessReadyCallbacks(); }
+
 
     void OnAfterConfigLoad(bool /*reload*/) override
     {
